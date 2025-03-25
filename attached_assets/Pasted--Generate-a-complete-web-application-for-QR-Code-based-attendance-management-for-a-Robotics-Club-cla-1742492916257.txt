@@ -1,0 +1,39 @@
+"Generate a complete web application for QR Code-based attendance management for a Robotics Club class. The app should include the following features and specifications:"
+
+1. User Roles & Authentication
+Admin Login: Admins can generate QR codes, review attendance, and manage students.
+Student Login: Students scan QR codes to mark attendance.
+Login Credentials Stored in Excel: Student credentials will be managed via an Excel sheet.
+2. QR Code Attendance System
+QR Code Generator (Admin Side)
+Generates a unique QR code for each session.
+QR Code Validity: The QR code expires after 10 minutes to prevent misuse.
+QR Scanner (Student Side)
+Students scan the QR code to mark attendance.
+Once scanned, the student's presence is automatically recorded in the database.
+3. Attendance Management
+Live Attendance Tracking: Admin can view real-time attendance status.
+Excel-Based Attendance Records
+All attendance data is stored in Excel files for easy review and analysis.
+Admin can export attendance reports in CSV or Excel format.
+4. Dashboard Features
+Admin Dashboard:
+Generate new QR codes with a 10-minute validity timer.
+View real-time attendance statistics.
+Download attendance reports in Excel format.
+Add New Students: Admin can manually add new students, updating the Excel sheet with their credentials.
+Student Dashboard:
+View personal attendance history.
+Scan QR codes for check-in.
+5. Additional Enhancements
+QR Code Security Measures: Prevents multiple check-ins from the same student.
+Automated Notifications:
+Alerts students about upcoming classes.
+Notifies admins when a session’s QR code expires.
+Dark & Light Mode Support for better user experience.
+6. Tech Stack Suggestions (Optional)
+Frontend: React.js with Tailwind CSS for UI.
+Backend: Firebase (Real-time Database) OR Node.js with Express.js & MongoDB.
+QR Code Handling: qrcode.react for generation, html5-qrcode for scanning.
+Excel Integration: xlsx package in Node.js to manage Excel files.
+"Generate the complete code structure for this web app, ensuring modular design, security, and efficiency."
