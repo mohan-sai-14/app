@@ -1,10 +1,29 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
-import { AlertCircle, CheckCircle, QrCode } from "lucide-react";
+import { AlertCircle, CheckCircle, QrCode, ClockIcon } from "lucide-react";
 import { markAttendanceWithQR } from "@/lib/qrcode";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import Html5QrcodePlugin from '@/components/student/html5-qrcode-plugin';
+
+// Define types for the data returned from API
+interface AttendanceRecord {
+  id: string;
+  sessionId: string;
+  userId: string;
+  checkInTime: string;
+  status: string;
+}
+
+interface Session {
+  id: string;
+  name: string;
+  date: string;
+  time: string;
+  duration: number;
+  expiresAt: string;
+  isActive: boolean;
+}
 
 export default function StudentScanner() {
   const { toast } = useToast();
@@ -12,20 +31,21 @@ export default function StudentScanner() {
   const [scanSuccess, setScanSuccess] = useState(false);
   const [scanError, setScanError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [isExpired, setIsExpired] = useState(false);
 
   // Fetch active session (but scanner should work even without it)
-  const { data: activeSession } = useQuery({
+  const { data: activeSession } = useQuery<Session>({
     queryKey: ['/api/sessions/active'],
     retry: false,
   });
 
   // Check if student is already checked in
-  const { data: attendanceRecords, refetch: refetchAttendance } = useQuery({
+  const { data: attendanceRecords } = useQuery<AttendanceRecord[]>({
     queryKey: ['/api/attendance/me'],
   });
 
   const isCheckedIn = attendanceRecords?.some(
-    (record: any) => record.sessionId === activeSession?.id
+    (record) => record.sessionId === activeSession?.id
   );
 
   useEffect(() => {
@@ -33,17 +53,29 @@ export default function StudentScanner() {
       setScanSuccess(isCheckedIn || false);
       setScanError(false);
       setErrorMessage("");
+      setIsExpired(false);
     }
   }, [activeSession, isCheckedIn]);
 
   const handleQrCodeScan = async (decodedText: string) => {
     try {
-      const parsedQR = JSON.parse(decodedText);
-      if (!parsedQR.sessionId) {
-        throw new Error("Invalid QR code format");
+      // Reset states
+      setScanSuccess(false);
+      setScanError(false);
+      setErrorMessage("");
+      setIsExpired(false);
+      
+      let parsedQR;
+      try {
+        parsedQR = JSON.parse(decodedText);
+        if (!parsedQR.sessionId) {
+          throw new Error("Invalid QR code format");
+        }
+      } catch (parseError) {
+        throw new Error("Invalid QR code format - could not parse QR data");
       }
 
-      await markAttendanceWithQR(parsedQR);
+      await markAttendanceWithQR(decodedText);
       setScanSuccess(true);
       refetchAttendance();
 
@@ -55,16 +87,29 @@ export default function StudentScanner() {
     } catch (error: any) {
       console.error("QR scan error:", error);
       setScanError(true);
-      setErrorMessage(error.message || "Failed to process QR code");
+      
+      // Check if it's an expiration error
+      if (error.message && error.message.toLowerCase().includes("expired")) {
+        setIsExpired(true);
+        setErrorMessage("This QR code has expired. Please ask for a new code.");
+      } else {
+        setErrorMessage(error.message || "Failed to process QR code");
+      }
 
       // Show error toast
       toast({
         variant: "destructive",
-        title: "Scan Failed",
+        title: isExpired ? "QR Code Expired" : "Scan Failed",
         description: error.message || "Error scanning QR code. Please try again.",
       });
     }
   };
+  
+  // Get the refetch function from the query
+  const { refetch: refetchAttendance } = useQuery<AttendanceRecord[]>({
+    queryKey: ['/api/attendance/me'],
+    enabled: false, // Disable automatic fetching since we'll trigger it manually
+  });
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
@@ -98,8 +143,6 @@ export default function StudentScanner() {
                     qrCodeSuccessCallback={handleQrCodeScan}
                     qrCodeErrorCallback={() => {}}
                     disableFlip={false}
-                    width={300}  // Fixed width
-                    height={300} // Fixed height
                   />
                 </div>
               </>
@@ -123,12 +166,18 @@ export default function StudentScanner() {
 
           {/* QR Scan Error Message */}
           {scanError && (
-            <div className="mt-6 bg-red-50 dark:bg-red-900 p-4 rounded-md">
+            <div className={`mt-6 ${isExpired ? 'bg-yellow-50 dark:bg-yellow-900' : 'bg-red-50 dark:bg-red-900'} p-4 rounded-md`}>
               <div className="flex items-start">
-                <AlertCircle className="h-5 w-5 mr-2 text-red-500" />
+                {isExpired ? (
+                  <ClockIcon className="h-5 w-5 mr-2 text-yellow-500" />
+                ) : (
+                  <AlertCircle className="h-5 w-5 mr-2 text-red-500" />
+                )}
                 <div>
-                  <p className="font-medium text-red-800 dark:text-red-200">Error scanning QR code</p>
-                  <p className="text-sm text-red-700 dark:text-red-300">
+                  <p className={`font-medium ${isExpired ? 'text-yellow-800 dark:text-yellow-200' : 'text-red-800 dark:text-red-200'}`}>
+                    {isExpired ? 'QR Code Expired' : 'Error scanning QR code'}
+                  </p>
+                  <p className={`text-sm ${isExpired ? 'text-yellow-700 dark:text-yellow-300' : 'text-red-700 dark:text-red-300'}`}>
                     {errorMessage || "The QR code may be invalid or expired. Please try again or contact your instructor."}
                   </p>
                 </div>

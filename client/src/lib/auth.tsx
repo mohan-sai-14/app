@@ -1,6 +1,7 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { queryClient, apiRequest } from "./queryClient";
+import { getApiUrl } from "./config";
 
 export interface User {
   id: number;
@@ -26,7 +27,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const fetchUser = async () => {
       try {
-        const response = await fetch("/api/me", {
+        const response = await fetch(getApiUrl("/api/me"), {
           credentials: 'include'
         });
         if (response.ok) {
@@ -45,23 +46,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const loginMutation = useMutation({
     mutationFn: async ({ username, password }: { username: string; password: string }) => {
-      const res = await apiRequest("POST", "/api/login", { username, password });
+      const res = await apiRequest("POST", getApiUrl("/api/login"), { username, password });
       return res.json();
     },
     onSuccess: (data) => {
       setUser(data);
-      queryClient.invalidateQueries({ queryKey: ['/api/me'] });
+      queryClient.invalidateQueries({ queryKey: [getApiUrl('/api/me')] });
     },
   });
 
   const logoutMutation = useMutation({
     mutationFn: async () => {
-      await apiRequest("POST", "/api/logout");
+      await apiRequest("POST", getApiUrl("/api/logout"));
     },
     onSuccess: () => {
       setUser(null);
+      queryClient.clear();
       queryClient.invalidateQueries();
     },
+    onError: (error) => {
+      console.error("Logout error:", error);
+      setUser(null);
+      queryClient.clear();
+    }
   });
 
   const login = async (username: string, password: string) => {

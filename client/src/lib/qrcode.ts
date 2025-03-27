@@ -11,15 +11,17 @@ export async function generateSessionQRCode(sessionData: {
   // Create a unique QR code content with session data and timestamp
   const timestamp = Date.now();
   const qrCodeContent = JSON.stringify({
+    sessionId: timestamp, // Use timestamp as temporary session ID
     name: sessionData.name,
-    timestamp,
     date: sessionData.date,
     time: sessionData.time,
-    expiresAt: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+    duration: sessionData.duration,
+    generatedAt: new Date().toISOString(),
+    expiresAfter: 20 // QR code expires after 20 minutes (increased from 10)
   });
 
-  // Set expiry time to 10 minutes from now
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  // Set expiry time to 20 minutes from now
+  const expiresAt = new Date(Date.now() + 20 * 60 * 1000).toISOString();
 
   try {
     // Create the session with QR data
@@ -30,17 +32,32 @@ export async function generateSessionQRCode(sessionData: {
       duration: sessionData.duration,
       qrCode: qrCodeContent,
       expiresAt,
-      isActive: true,
-      attendees: []
+      isActive: true
     });
 
-    if (response.error) {
+    if (!response.ok) {
       const errorData = await response.json();
       console.error("QR code generation error:", errorData);
       throw new Error(errorData.message || "Failed to create session");
     }
 
     const newSession = await response.json();
+    
+    // Update QR code content with the actual session ID from the database
+    const updatedQrContent = JSON.stringify({
+      sessionId: newSession.id,
+      name: sessionData.name,
+      date: sessionData.date,
+      time: sessionData.time,
+      duration: sessionData.duration,
+      generatedAt: new Date().toISOString(),
+      expiresAfter: 20 // QR code expires after 20 minutes (increased from 10)
+    });
+
+    // Update the session with the correct QR code content
+    await apiRequest("PUT", `/api/sessions/${newSession.id}`, {
+      qrCode: updatedQrContent
+    });
     
     // Invalidate sessions query to refresh data
     queryClient.invalidateQueries({ queryKey: ['/api/sessions'] });
@@ -63,6 +80,18 @@ export async function markAttendanceWithQR(qrContent: string) {
       throw new Error('Invalid QR code format');
     }
     
+    // Check for client-side expiration if the QR code has expiresAfter property
+    if (parsedContent.generatedAt && parsedContent.expiresAfter) {
+      const generatedTime = new Date(parsedContent.generatedAt).getTime();
+      // Add a buffer to the expiration time (extra 5 minutes to ensure students can scan)
+      const expirationTime = generatedTime + ((parsedContent.expiresAfter + 5) * 60 * 1000);
+      const currentTime = Date.now();
+      
+      if (currentTime > expirationTime) {
+        throw new Error('QR code has expired');
+      }
+    }
+    
     // Verify the session exists and is active
     const sessionResponse = await fetch(`/api/sessions/${parsedContent.sessionId}`, {
       credentials: 'include',
@@ -78,9 +107,20 @@ export async function markAttendanceWithQR(qrContent: string) {
       throw new Error('Session is no longer active');
     }
     
+    // Additional check for server-side expiration - add buffer time of 5 minutes
+    if (session.expiresAt) {
+      const serverExpiryTime = new Date(session.expiresAt).getTime();
+      const currentTime = Date.now();
+      const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+      
+      if (currentTime > (serverExpiryTime + bufferTime)) {
+        throw new Error('QR code has expired');
+      }
+    }
+    
     // Mark attendance
     const response = await apiRequest("POST", "/api/attendance", {
-      sessionId: parsedContent.sessionId
+      sessionId: parseInt(parsedContent.sessionId)
     });
 
     if (!response.ok) {

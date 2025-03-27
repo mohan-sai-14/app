@@ -1,0 +1,30 @@
+# Node.js dependencies
+node_modules/
+
+# Firebase files
+.firebase/
+firebase.json
+.firebaserc
+
+# Git files
+.git/
+.gitignore
+
+# Local development files
+.vscode/
+*.log
+
+# Client-side code (already built and in dist)
+client/src/
+
+# Test files
+**/*.test.ts
+**/*.spec.ts
+
+# Build artifacts except dist/server.js
+dist/public/
+
+# Miscellaneous
+README.md
+*.md
+.DS_Store 

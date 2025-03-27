@@ -19,17 +19,21 @@ declare module "express-session" {
 export async function registerRoutes(app: Express): Promise<Server> {
   // Configure session storage
   const SessionStore = MemoryStore(session);
-  app.use(
-    session({
-      secret: randomBytes(32).toString("hex"),
-      resave: false,
-      saveUninitialized: false,
-      store: new SessionStore({ checkPeriod: 86400000 }), // Prune expired entries every 24h
-      cookie: {
-        maxAge: 24 * 60 * 60 * 1000, // 24 hours
-      },
-    })
-  );
+  const sessionConfig = {
+    secret: process.env.SESSION_SECRET || "your-secret-key",
+    resave: false,
+    saveUninitialized: false,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      sameSite: process.env.NODE_ENV === "production" ? "none" : "lax",
+    },
+    store: new MemoryStore({
+      checkPeriod: 86400000, // 24 hours
+    }),
+  };
+  app.use(session(sessionConfig));
 
   // Initialize passport
   app.use(passport.initialize());
@@ -282,6 +286,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ message: "Session expired successfully" });
   });
 
+  app.put("/api/sessions/:id", isAdmin, async (req, res, next) => {
+    try {
+      const sessionId = parseInt(req.params.id);
+      const sessionData = req.body;
+      
+      const updatedSession = await storage.updateSession(sessionId, sessionData);
+      if (!updatedSession) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      res.json(updatedSession);
+    } catch (error) {
+      next(error);
+    }
+  });
+
   // Attendance routes
   app.post("/api/attendance", isAuthenticated, async (req, res, next) => {
     try {
@@ -298,8 +318,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ message: "Session is not active" });
       }
       
-      // Check if QR code has expired
-      if (new Date() > new Date(session.expiresAt)) {
+      // Check if QR code has expired - add buffer time of 5 minutes
+      const expiryTime = new Date(session.expiresAt).getTime();
+      const currentTime = Date.now();
+      const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
+      
+      if (currentTime > (expiryTime + bufferTime)) {
         return res.status(400).json({ message: "QR code has expired" });
       }
       

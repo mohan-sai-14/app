@@ -9,14 +9,34 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { useEffect } from 'react';
 
 interface SidebarProps {
   isOpen: boolean;
   setIsOpen: (open: boolean) => void;
+  activeTab: string;
 }
 
-export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
+export default function Sidebar({ isOpen, setIsOpen, activeTab }: SidebarProps) {
   const [location] = useLocation();
+
+  // Log state changes for debugging
+  useEffect(() => {
+    console.log("Sidebar isOpen state changed:", isOpen);
+  }, [isOpen]);
+
+  useEffect(() => {
+    const handleEscKey = (event: KeyboardEvent) => {
+      if (isOpen && event.key === 'Escape') {
+        setIsOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscKey);
+    return () => {
+      window.removeEventListener('keydown', handleEscKey);
+    };
+  }, [isOpen, setIsOpen]);
 
   const isActive = (path: string) => {
     if (path === "/admin" && location === "/admin") {
@@ -37,37 +57,59 @@ export default function Sidebar({ isOpen, setIsOpen }: SidebarProps) {
   return (
     <aside 
       className={cn(
-        "w-64 bg-white dark:bg-background shadow-md fixed left-0 top-0 bottom-0 transform transition-transform z-20 pt-16",
-        isOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"
+        "fixed left-0 top-0 bottom-0 z-40 w-[280px] transform transition-transform duration-200 ease-in-out",
+        "border-r bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 shadow-lg",
+        isOpen ? "translate-x-0" : "-translate-x-full",
+        "lg:w-64"
       )}
     >
-      <nav className="p-4">
-        <ul className="space-y-2">
-          {navItems.map((item) => (
-            <li key={item.path}>
-              <Button
-                variant={isActive(item.path) ? "default" : "ghost"}
-                className={cn(
-                  "flex items-center w-full justify-start",
-                  isActive(item.path) 
-                    ? "bg-primary text-primary-foreground" 
-                    : "text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800"
-                )}
-                onClick={() => {
-                  if (window.innerWidth < 768) {
-                    setIsOpen(false);
-                  }
-                }}
-                asChild
-              >
-                <Link href={item.path}>
-                  {item.icon}
-                  <span>{item.label}</span>
-                </Link>
-              </Button>
-            </li>
-          ))}
-        </ul>
+      <div className="flex h-14 items-center justify-between border-b px-4">
+        <span className="font-medium">Menu</span>
+        <Button
+          variant="destructive"
+          size="icon"
+          className="inline-flex"
+          onClick={() => setIsOpen(false)}
+          aria-label="Close Sidebar"
+        >
+          <svg
+            xmlns="http://www.w3.org/2000/svg"
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M18 6 6 18" />
+            <path d="m6 6 12 12" />
+          </svg>
+        </Button>
+      </div>
+      <nav className="space-y-1 p-4">
+        {navItems.map((item) => (
+          <Button
+            key={item.path}
+            variant={isActive(item.path) ? "secondary" : "ghost"}
+            className={cn(
+              "w-full justify-start text-base",
+              isActive(item.path) && "bg-muted font-medium"
+            )}
+            asChild
+            onClick={() => {
+              if (window.innerWidth < 1024) {
+                setIsOpen(false);
+              }
+            }}
+          >
+            <Link href={item.path} className="flex items-center gap-3">
+              {item.icon}
+              <span>{item.label}</span>
+            </Link>
+          </Button>
+        ))}
       </nav>
     </aside>
   );

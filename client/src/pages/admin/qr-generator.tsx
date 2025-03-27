@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useForm } from "react-hook-form";
 import { z } from "zod";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,10 +14,13 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
-import { Download, QrCode as QrCodeIcon } from "lucide-react";
+import { Download, QrCode as QrCodeIcon, Check, Loader2 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { useToast } from "@/hooks/use-toast";
 import QRCode from "qrcode";
+import { supabase } from "@/lib/supabase"; // Import Supabase client
+import { useQuery } from "@tanstack/react-query";
+import { format } from "date-fns"; // Add this import for date formatting
 
 const formSchema = z.object({
   name: z.string().min(1, "Session name is required"),
@@ -31,8 +34,22 @@ type FormValues = z.infer<typeof formSchema>;
 export default function QRGenerator() {
   const [qrValue, setQrValue] = useState<string>("");
   const [qrUrl, setQrUrl] = useState<string>("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [sessionSaved, setSessionSaved] = useState(false);
   const { toast } = useToast();
   const qrRef = useRef<HTMLDivElement>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [expiryTime, setExpiryTime] = useState<Date | null>(null);
+  const [timeLeft, setTimeLeft] = useState<number | null>(null);
+
+  // Query to refresh sessions list
+  const { refetch: refetchSessions } = useQuery({
+    queryKey: ['sessions'],
+    queryFn: async () => {
+      const { data } = await supabase.from('sessions').select('*');
+      return data || [];
+    },
+  });
 
   const form = useForm<FormValues>({
     resolver: zodResolver(formSchema),
@@ -44,14 +61,96 @@ export default function QRGenerator() {
     },
   });
 
+  // Clear error message when form is changed
+  useEffect(() => {
+    const subscription = form.watch(() => {
+      if (errorMessage) {
+        setErrorMessage(null);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, [form, errorMessage]);
+
+  // Set up countdown timer
+  useEffect(() => {
+    if (!expiryTime) return;
+    
+    const timer = setInterval(() => {
+      const now = new Date();
+      const diff = Math.max(0, Math.floor((expiryTime.getTime() - now.getTime()) / 1000));
+      
+      if (diff <= 0) {
+        setTimeLeft(0);
+        setQrValue("");
+        setQrUrl("");
+        setSessionSaved(false);
+        setExpiryTime(null);
+        clearInterval(timer);
+        toast({
+          variant: "destructive",
+          title: "QR Code Expired",
+          description: "The QR code has expired. Please generate a new one if needed.",
+        });
+      } else {
+        setTimeLeft(diff);
+      }
+    }, 1000);
+    
+    return () => clearInterval(timer);
+  }, [expiryTime, toast]);
+  
+  // Format time left for display
+  const formatTimeLeft = (seconds: number | null): string => {
+    if (seconds === null) return "";
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Format date for better consistency with database
+  const formatDateForDB = (dateString: string) => {
+    try {
+      // Keep the date in YYYY-MM-DD format
+      return dateString;
+    } catch (e) {
+      console.error("Error formatting date:", e);
+      return dateString;
+    }
+  };
+
+  // Format time for better consistency with database
+  const formatTimeForDB = (timeString: string) => {
+    try {
+      // Keep the time in HH:MM format
+      return timeString;
+    } catch (e) {
+      console.error("Error formatting time:", e);
+      return timeString;
+    }
+  };
+
   const onSubmit = async (data: FormValues) => {
     try {
+      setIsSubmitting(true);
+      setSessionSaved(false);
+      setErrorMessage(null);
+      
+      // Format date and time for consistency
+      const formattedDate = formatDateForDB(data.date);
+      const formattedTime = formatTimeForDB(data.time);
+      
+      // Generate a unique session ID
+      const sessionId = uuidv4();
+      
+      // Create QR data object with formatted date and time
       const qrData = {
-        sessionId: uuidv4(), // Generate a unique session ID
+        sessionId: sessionId,
         name: data.name,
-        date: data.date,
-        time: data.time,
+        date: formattedDate,
+        time: formattedTime,
         duration: data.duration,
+        generatedAt: new Date().toISOString(),
+        expiresAfter: 20 // QR code expires after 20 minutes
       };
 
       // Convert to string for QR code
@@ -62,17 +161,82 @@ export default function QRGenerator() {
       const url = await QRCode.toDataURL(qrString);
       setQrUrl(url);
 
+      // Set expiration time to 20 minutes from now (QR code expiration)
+      const qrExpirationDate = new Date();
+      qrExpirationDate.setMinutes(qrExpirationDate.getMinutes() + 20);
+      
+      // Set expiry time for countdown
+      setExpiryTime(qrExpirationDate);
+      
+      // Format expires_at as ISO string without milliseconds for PostgreSQL compatibility
+      // Format: YYYY-MM-DDTHH:MM:SSZ
+      const expiresAt = qrExpirationDate.toISOString().replace(/\.\d{3}Z$/, 'Z');
+
+      // For debugging
+      console.log("Form data being submitted:", data);
+      console.log("QR code will expire at:", expiresAt);
+      
+      // Prepare the data for insertion
+      const sessionData = {
+        name: data.name,
+        date: formattedDate,
+        time: formattedTime,
+        duration: data.duration, // Keep original duration for session length
+        qr_code: qrString,
+        expires_at: expiresAt, // QR code expires after 20 minutes
+        is_active: true
+      };
+      
+      console.log("Inserting session with data:", sessionData);
+
+      // Insert session data into Supabase with prepared data
+      const { data: insertedData, error } = await supabase
+        .from('sessions')
+        .insert([sessionData]);
+
+      if (error) {
+        console.error("Supabase error:", error);
+        throw new Error(`Database error: ${error.message}`);
+      }
+
+      console.log("Session inserted successfully");
+
+      // Refresh sessions list - wrapped in try/catch in case refetch fails
+      try {
+        if (typeof refetchSessions === 'function') {
+          await refetchSessions();
+        }
+      } catch (refreshError) {
+        console.warn("Could not refresh sessions list:", refreshError);
+        // Don't throw this error as the insert succeeded
+      }
+      
+      setSessionSaved(true);
+      
       toast({
         title: "QR Code Generated",
-        description: "New QR code has been generated successfully.",
+        description: "New QR code has been generated and will expire in 20 minutes.",
       });
     } catch (error) {
-      console.error("Error generating QR code:", error);
+      console.error("Error generating QR code or saving session:", error);
+      let errorMsg = "An error occurred while generating the QR code or saving the session.";
+      
+      // Extract more specific error message if available
+      if (error instanceof Error) {
+        errorMsg = error.message;
+      } else if (typeof error === 'object' && error !== null && 'message' in error) {
+        errorMsg = String((error as any).message);
+      }
+      
+      setErrorMessage(errorMsg);
+      
       toast({
         variant: "destructive",
         title: "Failed to generate QR code",
-        description: "An error occurred while generating the QR code.",
+        description: errorMsg,
       });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -81,7 +245,7 @@ export default function QRGenerator() {
 
     const link = document.createElement("a");
     link.href = qrUrl;
-    link.download = "qrcode.png";
+    link.download = `qrcode-${form.getValues().name.replace(/\s+/g, "-")}.png`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -92,6 +256,14 @@ export default function QRGenerator() {
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-xl font-semibold">QR Code Generator</h2>
       </div>
+
+      {errorMessage && (
+        <div className="bg-destructive/15 text-destructive p-4 rounded-md mb-4">
+          <h3 className="font-medium">Error Occurred</h3>
+          <p className="text-sm">{errorMessage}</p>
+          <p className="text-sm mt-2">Please check your data and try again.</p>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
@@ -160,8 +332,20 @@ export default function QRGenerator() {
                   )}
                 />
 
-                <Button type="submit" className="w-full">
-                  <QrCodeIcon className="mr-2 h-4 w-4" /> Generate QR Code
+                <Button 
+                  type="submit" 
+                  className="w-full" 
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...
+                    </>
+                  ) : (
+                    <>
+                      <QrCodeIcon className="mr-2 h-4 w-4" /> Generate QR Code
+                    </>
+                  )}
                 </Button>
               </form>
             </Form>
@@ -177,7 +361,7 @@ export default function QRGenerator() {
               <div className="flex flex-col items-center space-y-4">
                 <div
                   ref={qrRef}
-                  className="w-64 h-64 border-4 border-primary p-2 rounded-lg flex items-center justify-center"
+                  className="w-64 h-64 border-4 border-primary p-2 rounded-lg flex items-center justify-center relative"
                 >
                   <QRCodeSVG
                     value={qrValue}
@@ -185,10 +369,27 @@ export default function QRGenerator() {
                     level="H"
                     includeMargin={true}
                   />
+                  {timeLeft !== null && (
+                    <div className="absolute -top-4 -right-4 bg-yellow-500 text-white font-bold rounded-full w-12 h-12 flex items-center justify-center shadow-md">
+                      {formatTimeLeft(timeLeft)}
+                    </div>
+                  )}
                 </div>
-                <Button onClick={downloadQR} className="flex items-center">
-                  <Download className="mr-2 h-4 w-4" /> Download QR Code
-                </Button>
+                <div className="flex items-center gap-2">
+                  <Button onClick={downloadQR} className="flex items-center">
+                    <Download className="mr-2 h-4 w-4" /> Download QR Code
+                  </Button>
+                  {sessionSaved && (
+                    <div className="flex items-center text-sm text-green-500 font-medium">
+                      <Check className="h-4 w-4 mr-1" /> Saved to database
+                    </div>
+                  )}
+                </div>
+                {timeLeft !== null && (
+                  <div className="text-sm text-muted-foreground text-center">
+                    This QR code will expire in <span className="font-medium text-yellow-600">{formatTimeLeft(timeLeft)}</span>
+                  </div>
+                )}
               </div>
             ) : (
               <div className="flex flex-col items-center justify-center h-64 text-center">

@@ -1,3 +1,5 @@
+import { getApiUrl } from "./config";
+
 // Debug helper functions
 
 /**
@@ -17,7 +19,7 @@ export function debugLog(scope: string, message: string, data?: any) {
 export async function checkAuthStatus() {
   try {
     debugLog('AUTH', 'Checking authentication status...');
-    const res = await fetch('/api/me', {
+    const res = await fetch(getApiUrl('/api/me'), {
       credentials: 'include',
     });
     
@@ -40,8 +42,9 @@ export async function checkAuthStatus() {
  */
 export async function testApiEndpoint(endpoint: string) {
   try {
-    debugLog('API', `Testing endpoint: ${endpoint}`);
-    const res = await fetch(endpoint, {
+    const fullUrl = endpoint.startsWith('http') ? endpoint : getApiUrl(endpoint);
+    debugLog('API', `Testing endpoint: ${fullUrl}`);
+    const res = await fetch(fullUrl, {
       credentials: 'include',
     });
     
@@ -49,7 +52,7 @@ export async function testApiEndpoint(endpoint: string) {
     const statusText = res.statusText;
     
     if (res.ok) {
-      debugLog('API', `Endpoint ${endpoint} is accessible: ${status} ${statusText}`);
+      debugLog('API', `Endpoint ${fullUrl} is accessible: ${status} ${statusText}`);
       try {
         const data = await res.json();
         debugLog('API', 'Response data:', data);
@@ -59,7 +62,7 @@ export async function testApiEndpoint(endpoint: string) {
         return { success: true, status, data: null };
       }
     } else {
-      debugLog('API', `Endpoint ${endpoint} failed: ${status} ${statusText}`);
+      debugLog('API', `Endpoint ${fullUrl} failed: ${status} ${statusText}`);
       try {
         const errorData = await res.json();
         debugLog('API', 'Error details:', errorData);
@@ -69,7 +72,7 @@ export async function testApiEndpoint(endpoint: string) {
       }
     }
   } catch (error) {
-    debugLog('API', `Network error testing ${endpoint}:`, error);
+    debugLog('API', `Network error testing ${fullUrl}:`, error);
     return { success: false, status: 0, error };
   }
 }

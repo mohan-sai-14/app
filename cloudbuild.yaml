@@ -1,0 +1,29 @@
+steps:
+# Install dependencies
+- name: 'node:16'
+  entrypoint: npm
+  args: ['install']
+
+# Build the application
+- name: 'node:16'
+  entrypoint: npm
+  args: ['run', 'build:server']
+
+# Deploy to Cloud Functions
+- name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+  entrypoint: 'bash'
+  args:
+  - '-c'
+  - |
+    gcloud functions deploy attendance-api \
+      --region=us-central1 \
+      --source=. \
+      --trigger-http \
+      --runtime=nodejs16 \
+      --entry-point=api \
+      --allow-unauthenticated
+
+# Set environment variables
+substitutions:
+  _ENVIRONMENT: 'production'
+  _REGION: 'us-central1' 

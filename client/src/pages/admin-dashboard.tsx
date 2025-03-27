@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useAuth } from "@/lib/auth";
 import { useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
@@ -14,6 +14,8 @@ import QRGenerator from "@/pages/admin/qr-generator";
 import Attendance from "@/pages/admin/attendance";
 import Students from "@/pages/admin/students";
 import Reports from "@/pages/admin/reports";
+import QRTest from "@/pages/admin/qr-test";
+import { cn } from "@/lib/utils";
 
 type Attendance = {id: number};
 
@@ -25,6 +27,8 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState("home");
   const [isCreateSessionOpen, setIsCreateSessionOpen] = useState(false);
   const [sessionName, setSessionName] = useState('');
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const headerRef = useRef<HTMLDivElement>(null);
 
   const { data: sessions } = useQuery({
     queryKey: ['sessions'],
@@ -73,11 +77,19 @@ export default function AdminDashboard() {
   };
 
   const refetchSessions = () => {
-    sessions.refetch();
+    if (sessions && typeof sessions.refetch === 'function') {
+      sessions.refetch();
+    } else {
+      console.warn("Cannot refetch sessions: sessions object is undefined or missing refetch method");
+    }
   };
 
   const refetchAttendance = () => {
-    attendance.refetch();
+    if (attendance && typeof attendance.refetch === 'function') {
+      attendance.refetch();
+    } else {
+      console.warn("Cannot refetch attendance: attendance object is undefined or missing refetch method");
+    }
   };
 
   useEffect(() => {
@@ -111,48 +123,117 @@ export default function AdminDashboard() {
     setActiveTab(path);
   }, [location]);
 
+  // Close sidebar when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (sidebarOpen && 
+          sidebarRef.current && 
+          !sidebarRef.current.contains(event.target as Node) &&
+          headerRef.current &&
+          !headerRef.current.contains(event.target as Node)) {
+        setSidebarOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [sidebarOpen]);
+
+  // Make sure the toggle function is properly implemented
+  const toggleSidebar = () => {
+    setSidebarOpen(!sidebarOpen);
+    // Log for debugging
+    console.log("Toggle sidebar clicked, new state:", !sidebarOpen);
+  };
+
   if (!user) {
     return null;
   }
 
   return (
     <div className="flex h-screen bg-background">
+      {/* Backdrop overlay for all screen sizes when sidebar is open */}
+      <div 
+        onClick={() => setSidebarOpen(false)}
+        className={cn(
+          "fixed inset-0 bg-black/50 z-20 transition-opacity",
+          sidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+        )}
+      />
       <Sidebar isOpen={sidebarOpen} setIsOpen={setSidebarOpen} activeTab={activeTab} />
       <div className="flex-1 overflow-x-hidden overflow-y-auto">
-        <div className="p-4 border-b flex items-center">
-          <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(!sidebarOpen)} className="md:hidden">
-            <Menu className="h-6 w-6" />
-          </Button>
-        </div>
-        <main className="p-6">
-          <Dialog open={isCreateSessionOpen} onOpenChange={setIsCreateSessionOpen}>
-            <DialogTrigger asChild>
-              <Button variant="ghost" className="ml-auto" >
-                <PlusCircle className="h-4 w-4 mr-2" />
-                Create Session
+        <header ref={headerRef} className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="container flex h-14 items-center justify-between mx-auto px-4 max-w-7xl">
+            <div className="flex items-center gap-2">
+              <Button 
+                variant="default" 
+                size="icon" 
+                onClick={toggleSidebar}
+                aria-label="Toggle Menu"
+                className="focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+              >
+                <Menu className="h-5 w-5" />
               </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create New Session</DialogTitle>
-              </DialogHeader>
-              <div className="grid gap-4 p-4">
-                <div>
-                  <Label htmlFor="session-name">Session Name</Label>
-                  <Input id="session-name" type="text" placeholder="Enter session name" value={sessionName} onChange={(e) => setSessionName(e.target.value)} required />
-                </div>
-                <div>
-                  <Label htmlFor="session-date">Date</Label>
-                  <Input id="session-date" type="date" value={sessionDate} onChange={(e) => setSessionDate(e.target.value)} required />
-                </div>
-                <div>
-                  <Label htmlFor="session-time">Time</Label>
-                  <Input id="session-time" type="time" value={sessionTime} onChange={(e) => setSessionTime(e.target.value)} required />
-                </div>
-                <Button onClick={createSession}>Create Session</Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+              <h1 className="text-xl font-semibold">Robotics Club</h1>
+            </div>
+            <div className="flex items-center gap-2">
+              <Dialog open={isCreateSessionOpen} onOpenChange={setIsCreateSessionOpen}>
+                <DialogTrigger asChild>
+                  <Button variant="outline" size="sm" className="font-medium">
+                    <PlusCircle className="h-4 w-4 mr-2" />
+                    Create Session
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="sm:max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="text-center">Create New Session</DialogTitle>
+                  </DialogHeader>
+                  <div className="grid gap-4 py-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="session-name">Session Name</Label>
+                      <Input 
+                        id="session-name" 
+                        placeholder="Enter session name" 
+                        value={sessionName} 
+                        onChange={(e) => setSessionName(e.target.value)} 
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="session-date">Date</Label>
+                      <Input 
+                        id="session-date" 
+                        type="date" 
+                        value={sessionDate} 
+                        onChange={(e) => setSessionDate(e.target.value)} 
+                        className="w-full"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="session-time">Time</Label>
+                      <Input 
+                        id="session-time" 
+                        type="time" 
+                        value={sessionTime} 
+                        onChange={(e) => setSessionTime(e.target.value)} 
+                        className="w-full"
+                      />
+                    </div>
+                  </div>
+                  <Button onClick={createSession} className="w-full">
+                    Create Session
+                  </Button>
+                </DialogContent>
+              </Dialog>
+              <Button variant="destructive" size="sm" onClick={logout}>
+                Logout
+              </Button>
+            </div>
+          </div>
+        </header>
+        <main className="max-w-7xl mx-auto px-4 sm:px-6 md:px-8 py-6">
           {activeTab === "home" && <DashboardHome />}
           {activeTab === "qr-generator" && <QRGenerator />}
           {activeTab === "qr-test" && <QRTest />}

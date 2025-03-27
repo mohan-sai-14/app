@@ -1,0 +1,5 @@
+{
+  "scm.graph.pageSize": 30,
+  "workbench.editor.tabSizing": "shrink",
+  "workbench.editor.tabSizingFixedMaxWidth": 180
+}

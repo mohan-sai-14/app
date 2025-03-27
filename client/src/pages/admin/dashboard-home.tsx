@@ -7,7 +7,6 @@ import { format } from "date-fns";
 import { useAuth } from "@/lib/auth"; // Import authentication hook
 
 export default function DashboardHome() {
-  const { logout } = useAuth(); // Get logout function
   const [currentDate, setCurrentDate] = useState<string>("");
 
   useEffect(() => {
@@ -45,20 +44,17 @@ export default function DashboardHome() {
     totalStudents > 0 ? Math.round((presentStudents / totalStudents) * 100) : 0;
 
   return (
-    <div className="space-y-6">
-      {/* Header with Logout Button */}
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-semibold">Dashboard Overview</h2>
+    <div className="mx-auto">
+      {/* Header without Logout Button */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="text-2xl font-semibold">Dashboard Overview</h2>
         <div className="flex items-center space-x-4">
           <span className="text-sm text-muted-foreground">{currentDate}</span>
-          <Button variant="destructive" size="sm" onClick={logout}>
-            Logout
-          </Button>
         </div>
       </div>
 
       {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         <Card>
           <CardContent className="p-4">
             <div className="flex justify-between items-start">

@@ -1,0 +1,12 @@
+{
+  "name": "attendance-api",
+  "version": "1.0.0",
+  "description": "Attendance API for the QR code scanning application",
+  "main": "dist/server.js",
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "scripts": {
+    "start": "functions-framework --target=api"
+  }
+} 
