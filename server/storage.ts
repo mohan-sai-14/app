@@ -100,30 +100,83 @@ export class SupabaseStorage implements IStorage {
     return data || [];
   }
 
-  async createSession(session: InsertSession): Promise<Session> {
-    // Deactivate any currently active sessions
-    await supabase
-      .from('sessions')
-      .update({ is_active: false })
-      .eq('is_active', true);
-
-    // Create new active session with expiration
-    const expirationTime = new Date(Date.now() + session.duration * 60 * 1000);
-    const { data, error } = await supabase
-      .from('sessions')
-      .insert({
+  async createSession(session: Partial<Session>): Promise<Session> {
+    try {
+      console.log("Creating new session:", session.name);
+      
+      // Deactivate any currently active sessions first
+      await this.deactivateAllSessions();
+      
+      // Format session data with correct field names for Supabase
+      const formattedSession = {
         name: session.name,
         date: session.date,
         time: session.time,
         duration: session.duration,
-        qr_code: session.qrCode,
-        expires_at: expirationTime.toISOString(),
-        is_active: true
-      })
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
+        qr_code: session.qrCode || session.qr_code,
+        expires_at: session.expiresAt || session.expires_at,
+        is_active: true, // Always create as active
+        created_at: new Date().toISOString()
+      };
+      
+      console.log("Formatted session data:", formattedSession);
+      
+      const { data, error } = await supabase
+        .from('sessions')
+        .insert(formattedSession)
+        .select()
+        .single();
+      
+      if (error) {
+        console.error("Error creating session:", error);
+        throw error;
+      }
+      
+      console.log("Successfully created session:", data.id);
+      return data;
+    } catch (error) {
+      console.error("Exception in createSession:", error);
+      throw error;
+    }
+  }
+  
+  // Add a helper method to deactivate all sessions
+  async deactivateAllSessions(): Promise<void> {
+    try {
+      console.log("Deactivating all active sessions...");
+      
+      const { data: activeSessions, error: fetchError } = await supabase
+        .from('sessions')
+        .select('id')
+        .eq('is_active', true);
+      
+      if (fetchError) {
+        console.error("Error fetching active sessions to deactivate:", fetchError);
+        throw fetchError;
+      }
+      
+      if (!activeSessions || activeSessions.length === 0) {
+        console.log("No active sessions to deactivate");
+        return;
+      }
+      
+      console.log(`Found ${activeSessions.length} active sessions to deactivate`);
+      
+      const { error: updateError } = await supabase
+        .from('sessions')
+        .update({ is_active: false })
+        .in('id', activeSessions.map(s => s.id));
+      
+      if (updateError) {
+        console.error("Error deactivating sessions:", updateError);
+        throw updateError;
+      }
+      
+      console.log("Successfully deactivated all active sessions");
+    } catch (error) {
+      console.error("Exception in deactivateAllSessions:", error);
+      throw error;
+    }
   }
 
   async getSession(id: number): Promise<Session | undefined> {
@@ -149,25 +202,53 @@ export class SupabaseStorage implements IStorage {
   }
 
   async getActiveSession(): Promise<Session | undefined> {
-    const { data } = await supabase
-      .from('sessions')
-      .select()
-      .eq('is_active', true)
-      .single();
-
-    if (!data) return undefined;
-    
-    // Check if session has expired
-    const expiryTime = new Date(data.expires_at).getTime();
-    const currentTime = Date.now();
-    
-    if (currentTime > expiryTime) {
-      // Automatically deactivate expired sessions
-      await this.expireSession(data.id);
-      return undefined;
+    try {
+      console.log("Fetching active session...");
+      
+      const { data, error } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('is_active', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No active session found - this is normal
+          console.log("No active session found");
+          return undefined;
+        }
+        console.error("Error fetching active session:", error);
+        throw error;
+      }
+      
+      if (!data) {
+        console.log("No active session data returned");
+        return undefined;
+      }
+      
+      console.log("Active session found:", data.id, data.name, "expires_at:", data.expires_at);
+      
+      // Check if the session has expired
+      const expiryTime = new Date(data.expires_at).getTime();
+      const currentTime = Date.now();
+      
+      if (currentTime > expiryTime) {
+        console.log(`Session ${data.id} has expired at ${new Date(expiryTime).toISOString()}, current time: ${new Date(currentTime).toISOString()}`);
+        
+        // Automatically expire the session
+        await this.expireSession(data.id);
+        console.log(`Session ${data.id} marked as expired`);
+        
+        return undefined;
+      }
+      
+      return data;
+    } catch (error) {
+      console.error("Error in getActiveSession:", error);
+      throw error;
     }
-    
-    return data;
   }
 
   async getAllSessions(): Promise<Session[]> {
@@ -195,12 +276,44 @@ export class SupabaseStorage implements IStorage {
     return !error;
   }
 
-  async expireSession(id: number): Promise<boolean> {
-    const { error } = await supabase
-      .from('sessions')
-      .update({ is_active: false })
-      .eq('id', id);
-    return !error;
+  async expireSession(sessionId: number): Promise<boolean> {
+    try {
+      console.log(`Expiring session ${sessionId}...`);
+      
+      // First, get the session to check if it exists
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('sessions')
+        .select('*')
+        .eq('id', sessionId)
+        .single();
+        
+      if (sessionError) {
+        console.error(`Error finding session ${sessionId} to expire:`, sessionError);
+        return false;
+      }
+      
+      if (!sessionData) {
+        console.log(`Session ${sessionId} not found for expiration`);
+        return false;
+      }
+      
+      // Update the session to mark it as not active
+      const { error } = await supabase
+        .from('sessions')
+        .update({ is_active: false })
+        .eq('id', sessionId);
+      
+      if (error) {
+        console.error(`Error expiring session ${sessionId}:`, error);
+        throw error;
+      }
+      
+      console.log(`Successfully expired session ${sessionId}`);
+      return true;
+    } catch (error) {
+      console.error(`Exception in expireSession for ${sessionId}:`, error);
+      return false;
+    }
   }
 
   async markAttendance(attendance: InsertAttendance): Promise<Attendance> {

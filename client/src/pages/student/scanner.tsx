@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { AlertCircle, CheckCircle, QrCode, ClockIcon } from "lucide-react";
 import { markAttendanceWithQR } from "@/lib/qrcode";
@@ -32,16 +32,33 @@ export default function StudentScanner() {
   const [scanError, setScanError] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [isExpired, setIsExpired] = useState(false);
+  const [isScanning, setIsScanning] = useState(true);
+  const scanAttemptRef = useRef(0);
+
+  console.log("Rendering StudentScanner component");
 
   // Fetch active session (but scanner should work even without it)
-  const { data: activeSession } = useQuery<Session>({
+  const { data: activeSession, isLoading: sessionLoading, error: sessionError } = useQuery<Session>({
     queryKey: ['/api/sessions/active'],
-    retry: false,
+    retry: 3,
+    refetchInterval: 5000,  // Refetch every 5 seconds to ensure we have the latest session data
+    onSuccess: (data) => {
+      console.log("Active session data fetched:", data);
+    },
+    onError: (error) => {
+      console.error("Error fetching active session:", error);
+    }
   });
 
   // Check if student is already checked in
-  const { data: attendanceRecords } = useQuery<AttendanceRecord[]>({
+  const { data: attendanceRecords, isLoading: attendanceLoading } = useQuery<AttendanceRecord[]>({
     queryKey: ['/api/attendance/me'],
+    onSuccess: (data) => {
+      console.log("Attendance records fetched:", data?.length);
+    },
+    onError: (error) => {
+      console.error("Error fetching attendance records:", error);
+    }
   });
 
   const isCheckedIn = attendanceRecords?.some(
@@ -49,6 +66,7 @@ export default function StudentScanner() {
   );
 
   useEffect(() => {
+    console.log("Effect running - activeSession:", activeSession?.id, "isCheckedIn:", isCheckedIn);
     if (activeSession) {
       setScanSuccess(isCheckedIn || false);
       setScanError(false);
@@ -57,8 +75,22 @@ export default function StudentScanner() {
     }
   }, [activeSession, isCheckedIn]);
 
+  useEffect(() => {
+    // If checked in, stop scanning
+    if (isCheckedIn) {
+      console.log("Already checked in, stopping scanner");
+      setIsScanning(false);
+    } else {
+      console.log("Not checked in, enabling scanner");
+      setIsScanning(true);
+    }
+  }, [isCheckedIn]);
+
+  // Handle QR code scan
   const handleQrCodeScan = async (decodedText: string) => {
     try {
+      console.log("QR code scanned, attempt:", ++scanAttemptRef.current);
+      
       // Reset states
       setScanSuccess(false);
       setScanError(false);
@@ -67,17 +99,29 @@ export default function StudentScanner() {
       
       let parsedQR;
       try {
+        console.log("Parsing QR code content");
         parsedQR = JSON.parse(decodedText);
         if (!parsedQR.sessionId) {
           throw new Error("Invalid QR code format");
         }
+        console.log("QR code contains sessionId:", parsedQR.sessionId);
       } catch (parseError) {
+        console.error("Failed to parse QR code:", parseError);
         throw new Error("Invalid QR code format - could not parse QR data");
       }
 
+      console.log("Marking attendance with QR code for session:", parsedQR.sessionId);
       await markAttendanceWithQR(decodedText);
+      
+      console.log("Attendance marked successfully");
       setScanSuccess(true);
-      refetchAttendance();
+      
+      // Refetch attendance data
+      console.log("Refetching attendance data");
+      queryClient.invalidateQueries({ queryKey: ['/api/attendance/me'] });
+
+      // Stop scanning if successful
+      setIsScanning(false);
 
       // Show success toast
       toast({
@@ -90,6 +134,7 @@ export default function StudentScanner() {
       
       // Check if it's an expiration error
       if (error.message && error.message.toLowerCase().includes("expired")) {
+        console.log("QR code has expired");
         setIsExpired(true);
         setErrorMessage("This QR code has expired. Please ask for a new code.");
       } else {
@@ -104,12 +149,13 @@ export default function StudentScanner() {
       });
     }
   };
-  
-  // Get the refetch function from the query
-  const { refetch: refetchAttendance } = useQuery<AttendanceRecord[]>({
-    queryKey: ['/api/attendance/me'],
-    enabled: false, // Disable automatic fetching since we'll trigger it manually
-  });
+
+  // Handle QR code scan error (from scanner library)
+  const handleQrCodeError = (errorMessage: string) => {
+    console.log("QR scanner error:", errorMessage);
+    // We don't want to show these errors to the user as they're typically just "no QR code found"
+    // Only log them for debugging
+  };
 
   return (
     <div className="container mx-auto px-4 py-6 space-y-6">
@@ -119,9 +165,21 @@ export default function StudentScanner() {
             <QrCode className="mr-2 h-5 w-5 text-primary" />
             Scan QR Code
           </h3>
-          <p className="text-muted-foreground mb-6">
-            Scan the QR code displayed by your instructor to mark your attendance.
-          </p>
+          
+          {sessionLoading ? (
+            <p className="text-center text-muted-foreground">Loading session information...</p>
+          ) : sessionError ? (
+            <div className="bg-red-50 dark:bg-red-900 p-4 rounded-md mb-4">
+              <p className="text-red-800 dark:text-red-200">
+                {sessionError instanceof Error ? sessionError.message : "Error loading session"}
+              </p>
+            </div>
+          ) : (
+            <p className="text-muted-foreground mb-6">
+              Scan the QR code displayed by your instructor to mark your attendance.
+              {activeSession ? ` Current session: ${activeSession.name}` : " No active session found."}
+            </p>
+          )}
 
           <div className="flex flex-col items-center">
             {isCheckedIn ? (
@@ -138,13 +196,29 @@ export default function StudentScanner() {
               <>
                 {/* Fixed dimensions for QR scanner */}
                 <div className="qr-scanner-container w-[300px] h-[300px] max-w-full mx-auto mb-4 relative">
-                  <Html5QrcodePlugin 
-                    fps={10}
-                    qrCodeSuccessCallback={handleQrCodeScan}
-                    qrCodeErrorCallback={() => {}}
-                    disableFlip={false}
-                  />
+                  {isScanning && (
+                    <Html5QrcodePlugin 
+                      fps={10}
+                      qrCodeSuccessCallback={handleQrCodeScan}
+                      qrCodeErrorCallback={handleQrCodeError}
+                      disableFlip={false}
+                    />
+                  )}
+                  {!isScanning && !scanSuccess && (
+                    <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-md">
+                      <p className="text-white">Scanner paused</p>
+                    </div>
+                  )}
                 </div>
+                
+                {!isScanning && !scanSuccess && (
+                  <button 
+                    className="px-4 py-2 bg-primary text-white rounded-md mt-2"
+                    onClick={() => setIsScanning(true)}
+                  >
+                    Resume Scanner
+                  </button>
+                )}
               </>
             )}
           </div>
