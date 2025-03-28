@@ -80,45 +80,31 @@ export async function markAttendanceWithQR(qrContent: string) {
       throw new Error('Invalid QR code format');
     }
     
-    // Check for client-side expiration if the QR code has expiresAfter property
-    if (parsedContent.generatedAt && parsedContent.expiresAfter) {
-      const generatedTime = new Date(parsedContent.generatedAt).getTime();
-      // Add a buffer to the expiration time (extra 5 minutes to ensure students can scan)
-      const expirationTime = generatedTime + ((parsedContent.expiresAfter + 5) * 60 * 1000);
-      const currentTime = Date.now();
-      
-      if (currentTime > expirationTime) {
-        throw new Error('QR code has expired');
-      }
-    }
-    
     // Verify the session exists and is active
     const sessionResponse = await fetch(`/api/sessions/${parsedContent.sessionId}`, {
       credentials: 'include',
     });
     
     if (!sessionResponse.ok) {
-      throw new Error('Session not found or expired');
+      const errorData = await sessionResponse.json();
+      throw new Error(errorData.message || 'Session not found');
     }
     
     const session = await sessionResponse.json();
     
-    if (!session.isActive) {
+    if (!session.is_active) {
       throw new Error('Session is no longer active');
     }
     
-    // Additional check for server-side expiration - add buffer time of 5 minutes
-    if (session.expiresAt) {
-      const serverExpiryTime = new Date(session.expiresAt).getTime();
-      const currentTime = Date.now();
-      const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
-      
-      if (currentTime > (serverExpiryTime + bufferTime)) {
-        throw new Error('QR code has expired');
-      }
+    // Check expiration using the server's expires_at time
+    const expiryTime = new Date(session.expires_at).getTime();
+    const currentTime = Date.now();
+    
+    if (currentTime > expiryTime) {
+      throw new Error('QR code has expired');
     }
     
-    // Mark attendance
+    // Mark attendance with the current user's information
     const response = await apiRequest("POST", "/api/attendance", {
       sessionId: parseInt(parsedContent.sessionId)
     });
@@ -130,22 +116,23 @@ export async function markAttendanceWithQR(qrContent: string) {
     
     const result = await response.json();
     
-    // Invalidate attendance queries
+    // Invalidate attendance queries to refresh data
     queryClient.invalidateQueries({ queryKey: ['/api/attendance/me'] });
     
     return result;
   } catch (error) {
+    console.error("Error marking attendance:", error);
     throw error;
   }
 }
 
 // QR code expiration check
 export function isQRCodeExpired(session: any) {
-  if (!session || !session.expiresAt) {
+  if (!session || !session.expires_at) {
     return true;
   }
   
-  const expiryTime = new Date(session.expiresAt).getTime();
+  const expiryTime = new Date(session.expires_at).getTime();
   const currentTime = Date.now();
   
   return currentTime > expiryTime;
@@ -153,11 +140,11 @@ export function isQRCodeExpired(session: any) {
 
 // Calculate time remaining for QR code validity
 export function getQRCodeTimeRemaining(session: any) {
-  if (!session || !session.expiresAt) {
+  if (!session || !session.expires_at) {
     return "0:00";
   }
   
-  const expiryTime = new Date(session.expiresAt).getTime();
+  const expiryTime = new Date(session.expires_at).getTime();
   const currentTime = Date.now();
   const timeRemaining = Math.max(0, expiryTime - currentTime);
   

@@ -20,13 +20,17 @@ import { useToast } from "@/hooks/use-toast";
 import QRCode from "qrcode";
 import { supabase } from "@/lib/supabase"; // Import Supabase client
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns"; // Add this import for date formatting
+import { format, addMinutes, parseISO } from "date-fns"; // Add this import for date formatting
 
 const formSchema = z.object({
   name: z.string().min(1, "Session name is required"),
   date: z.string().min(1, "Date is required"),
   time: z.string().min(1, "Time is required"),
-  duration: z.coerce.number().min(1, "Duration must be at least 1 minute"),
+  duration: z.coerce
+    .number()
+    .min(1, "Duration must be at least 1 minute")
+    .max(60, "Duration cannot exceed 60 minutes"),
+  expiresAt: z.string().min(1, "Expiration time is required"),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -55,9 +59,10 @@ export default function QRGenerator() {
     resolver: zodResolver(formSchema),
     defaultValues: {
       name: "",
-      date: "",
-      time: "",
-      duration: 60,
+      date: format(new Date(), 'yyyy-MM-dd'),
+      time: format(new Date(), 'HH:mm'),
+      duration: 10,
+      expiresAt: format(addMinutes(new Date(), 10), "yyyy-MM-dd'T'HH:mm"), // Default to 10 minutes from now
     },
   });
 
@@ -141,6 +146,10 @@ export default function QRGenerator() {
       
       // Generate a unique session ID
       const sessionId = uuidv4();
+
+      // Convert the expiration time to UTC for storage
+      const localExpirationDate = new Date(data.expiresAt);
+      const utcExpirationDate = new Date(localExpirationDate.getTime() - localExpirationDate.getTimezoneOffset() * 60000);
       
       // Create QR data object with formatted date and time
       const qrData = {
@@ -150,7 +159,8 @@ export default function QRGenerator() {
         time: formattedTime,
         duration: data.duration,
         generatedAt: new Date().toISOString(),
-        expiresAfter: 20 // QR code expires after 20 minutes
+        expiresAfter: data.duration,
+        expiresAt: utcExpirationDate.toISOString() // Include exact expiration time
       };
 
       // Convert to string for QR code
@@ -161,61 +171,52 @@ export default function QRGenerator() {
       const url = await QRCode.toDataURL(qrString);
       setQrUrl(url);
 
-      // Set expiration time to 20 minutes from now (QR code expiration)
-      const qrExpirationDate = new Date();
-      qrExpirationDate.setMinutes(qrExpirationDate.getMinutes() + 20);
+      // Set expiry time for countdown (use local time for display)
+      setExpiryTime(localExpirationDate);
       
-      // Set expiry time for countdown
-      setExpiryTime(qrExpirationDate);
-      
-      // Format expires_at as ISO string without milliseconds for PostgreSQL compatibility
-      // Format: YYYY-MM-DDTHH:MM:SSZ
-      const expiresAt = qrExpirationDate.toISOString().replace(/\.\d{3}Z$/, 'Z');
+      // Format expires_at for PostgreSQL (UTC time)
+      const expiresAt = utcExpirationDate.toISOString();
 
       // For debugging
-      console.log("Form data being submitted:", data);
-      console.log("QR code will expire at:", expiresAt);
+      console.log("Form data being submitted:", {
+        ...data,
+        localExpirationTime: localExpirationDate.toISOString(),
+        utcExpirationTime: expiresAt
+      });
       
       // Prepare the data for insertion
       const sessionData = {
         name: data.name,
         date: formattedDate,
         time: formattedTime,
-        duration: data.duration, // Keep original duration for session length
+        duration: data.duration,
         qr_code: qrString,
-        expires_at: expiresAt, // QR code expires after 20 minutes
+        expires_at: expiresAt,
         is_active: true
       };
       
       console.log("Inserting session with data:", sessionData);
 
-      // Insert session data into Supabase with prepared data
+      // Insert session data into Supabase
       const { data: insertedData, error } = await supabase
         .from('sessions')
-        .insert([sessionData]);
+        .insert([sessionData])
+        .select()
+        .single();
 
       if (error) {
         console.error("Supabase error:", error);
         throw new Error(`Database error: ${error.message}`);
       }
 
-      console.log("Session inserted successfully");
-
-      // Refresh sessions list - wrapped in try/catch in case refetch fails
-      try {
-        if (typeof refetchSessions === 'function') {
-          await refetchSessions();
-        }
-      } catch (refreshError) {
-        console.warn("Could not refresh sessions list:", refreshError);
-        // Don't throw this error as the insert succeeded
-      }
-      
+      // Update UI state
       setSessionSaved(true);
-      
+      refetchSessions();
+
+      // Show success message with local time
       toast({
         title: "QR Code Generated",
-        description: "New QR code has been generated and will expire in 20 minutes.",
+        description: `New QR code has been generated and will expire at ${format(localExpirationDate, 'dd/MM/yyyy HH:mm')}.`,
       });
     } catch (error) {
       console.error("Error generating QR code or saving session:", error);
@@ -326,6 +327,29 @@ export default function QRGenerator() {
                       <FormLabel>Duration (minutes)</FormLabel>
                       <FormControl>
                         <Input type="number" min="1" {...field} />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
+                  name="expiresAt"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Expiration Time</FormLabel>
+                      <FormControl>
+                        <Input 
+                          type="datetime-local" 
+                          {...field}
+                          min={format(new Date(), "yyyy-MM-dd'T'HH:mm")}
+                          onChange={(e) => {
+                            field.onChange(e);
+                            // Log the selected time for verification
+                            console.log("Selected expiration time:", new Date(e.target.value).toISOString());
+                          }}
+                        />
                       </FormControl>
                       <FormMessage />
                     </FormItem>

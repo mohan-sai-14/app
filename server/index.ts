@@ -1,7 +1,8 @@
 import express, { type Request, Response, NextFunction } from "express";
 import cors from "cors";
 import { registerRoutes } from "./routes";
-import { setupVite, serveStatic, log } from "./vite";
+import { storage } from "./storage";
+import { setupVite, serveStatic, log, setupSessionExpirationCheck } from "./vite";
 import http from "http";
 
 const app = express();
@@ -47,14 +48,27 @@ app.use((req, res, next) => {
   next();
 });
 
-async function startServer() {
+// Initialize server
+async function init() {
+  // Create HTTP server
   const server = http.createServer(app);
-  await registerRoutes(app);
+  
+  // Setup Vite in development mode
+  if (process.env.NODE_ENV !== "production") {
+    await setupVite(app, server);
+  } else {
+    // In production serve static files
+    serveStatic(app);
+  }
 
+  // Register API routes
+  await registerRoutes(app);
+  
+  // Add error handling middleware
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
     const message = err.message || "Internal Server Error";
-
+    
     res.status(status).json({ message });
     if (process.env.NODE_ENV !== 'production') {
       throw err;
@@ -63,24 +77,20 @@ async function startServer() {
     }
   });
 
-  // Only setup vite in development
-  if (process.env.NODE_ENV !== 'production') {
-    await setupVite(app, server);
-  } else {
-    // In production serve static files
-    serveStatic(app);
-  }
+  // Setup session expiration checking
+  await setupSessionExpirationCheck(storage);
 
-  const port = process.env.PORT || 3000;
-  server.listen(Number(port), "0.0.0.0", () => {
-    console.log(`Server running on port ${port} in ${process.env.NODE_ENV || 'development'} mode`);
+  // Start the server
+  const PORT = process.env.PORT || 3000;
+  server.listen(PORT, () => {
+    console.log(`Server running on port ${PORT} in ${process.env.NODE_ENV || 'development'} mode`);
   });
-
+  
   return server;
 }
 
 // Start the server
-startServer().catch(err => {
+init().catch(err => {
   console.error('Failed to start server:', err);
   process.exit(1);
 });

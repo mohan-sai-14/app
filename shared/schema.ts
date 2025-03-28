@@ -29,6 +29,7 @@ export const attendance = pgTable("attendance", {
   sessionId: integer("session_id").notNull(),
   checkInTime: timestamp("check_in_time").notNull(),
   status: text("status").notNull().default("present"),
+  userName: text("user_name"),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -50,11 +51,12 @@ export const insertSessionSchema = z.object({
   isActive: z.boolean().default(true),
 });
 
-export const insertAttendanceSchema = createInsertSchema(attendance).pick({
-  userId: true,
-  sessionId: true,
-  checkInTime: true,
-  status: true,
+export const insertAttendanceSchema = z.object({
+  user_id: z.number(),
+  session_id: z.number(),
+  check_in_time: z.string(),
+  status: z.string().default("present"),
+  user_name: z.string().optional(),
 });
 
 export type InsertUser = z.infer<typeof insertUserSchema>;

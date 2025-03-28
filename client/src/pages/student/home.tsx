@@ -15,7 +15,7 @@ export default function StudentHome() {
   }, []);
 
   // Fetch active session
-  const { data: activeSession } = useQuery({
+  const { data: activeSession, error: sessionError } = useQuery({
     queryKey: ['/api/sessions/active'],
     retry: false
   });
@@ -103,8 +103,12 @@ export default function StudentHome() {
             ) : (
               <div className="text-center py-4">
                 <Calendar className="h-10 w-10 mx-auto text-muted-foreground mb-2" />
-                <p className="text-muted-foreground">No active sessions at the moment</p>
-                <p className="text-sm text-muted-foreground">Check back later or scan a QR code</p>
+                <p className="text-muted-foreground">
+                  {sessionError?.response?.data?.message || "No active sessions at the moment"}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {!sessionError && "Check back later or scan a QR code"}
+                </p>
               </div>
             )}
           </CardContent>

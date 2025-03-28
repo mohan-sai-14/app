@@ -5,7 +5,7 @@ import { loginSchema, insertUserSchema, insertSessionSchema, insertAttendanceSch
 import { z } from "zod";
 import { randomBytes } from "crypto";
 import session from "express-session";
-import MemoryStore from "memorystore";
+import memorystore from "memorystore";
 import passport from "passport";
 import { Strategy as LocalStrategy } from "passport-local";
 
@@ -16,9 +16,9 @@ declare module "express-session" {
   }
 }
 
-export async function registerRoutes(app: Express): Promise<Server> {
+export async function registerRoutes(app: Express): Promise<void> {
   // Configure session storage
-  const SessionStore = MemoryStore(session);
+  const MemoryStore = memorystore(session);
   const sessionConfig = {
     secret: process.env.SESSION_SECRET || "your-secret-key",
     resave: false,
@@ -257,11 +257,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.get("/api/sessions/active", isAuthenticated, async (req, res) => {
-    const activeSession = await storage.getActiveSession();
-    if (!activeSession) {
-      return res.status(404).json({ message: "No active session found" });
+    try {
+      const activeSession = await storage.getActiveSession();
+      
+      if (!activeSession) {
+        return res.status(404).json({ 
+          message: "No active session found. Please wait for an admin to start a new session." 
+        });
+      }
+
+      // Check if session has expired
+      const expiryTime = new Date(activeSession.expires_at).getTime();
+      const currentTime = Date.now();
+      
+      if (currentTime > expiryTime) {
+        await storage.expireSession(activeSession.id);
+        return res.status(404).json({ 
+          message: "The session has expired. Please wait for an admin to start a new session." 
+        });
+      }
+      
+      res.json(activeSession);
+    } catch (error) {
+      console.error("Error fetching active session:", error);
+      res.status(500).json({ 
+        message: "Failed to fetch active session. Please try again." 
+      });
     }
-    res.json(activeSession);
   });
 
   app.get("/api/sessions/:id", isAuthenticated, async (req, res) => {
@@ -276,14 +298,46 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.put("/api/sessions/:id/expire", isAdmin, async (req, res) => {
-    const sessionId = parseInt(req.params.id);
-    const success = await storage.expireSession(sessionId);
-    
-    if (!success) {
-      return res.status(404).json({ message: "Session not found" });
+    try {
+      const sessionId = parseInt(req.params.id);
+      const session = await storage.getSession(sessionId);
+      
+      if (!session) {
+        return res.status(404).json({ message: "Session not found" });
+      }
+      
+      // First get all students
+      const students = await storage.getUsersByRole("student");
+      
+      // Get all students who already marked attendance
+      const attendanceRecords = await storage.getAttendanceBySession(sessionId);
+      
+      // Find students who did not mark attendance (absent)
+      const presentStudentIds = attendanceRecords.map(record => record.user_id);
+      const absentStudents = students.filter(student => !presentStudentIds.includes(student.id));
+      
+      // Mark absent students
+      for (const student of absentStudents) {
+        await storage.markAttendance({
+          user_id: student.id,
+          session_id: sessionId,
+          check_in_time: new Date().toISOString(),
+          status: "absent",
+          user_name: student.name || ""
+        });
+      }
+      
+      // Mark the session as expired
+      const success = await storage.expireSession(sessionId);
+      
+      res.json({ 
+        message: "Session expired successfully", 
+        absentStudents: absentStudents.length
+      });
+    } catch (error) {
+      console.error("Error expiring session:", error);
+      res.status(500).json({ message: "Failed to expire session" });
     }
-    
-    res.json({ message: "Session expired successfully" });
   });
 
   app.put("/api/sessions/:id", isAdmin, async (req, res, next) => {
@@ -314,17 +368,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ message: "Session not found" });
       }
       
-      if (!session.isActive) {
+      if (!session.is_active) {
         return res.status(400).json({ message: "Session is not active" });
       }
       
-      // Check if QR code has expired - add buffer time of 5 minutes
-      const expiryTime = new Date(session.expiresAt).getTime();
+      // Check if session has expired
+      const expiryTime = new Date(session.expires_at).getTime();
       const currentTime = Date.now();
-      const bufferTime = 5 * 60 * 1000; // 5 minutes in milliseconds
       
-      if (currentTime > (expiryTime + bufferTime)) {
-        return res.status(400).json({ message: "QR code has expired" });
+      if (currentTime > expiryTime) {
+        // Automatically deactivate expired sessions
+        await storage.expireSession(sessionId);
+        return res.status(400).json({ message: "Session has expired" });
       }
       
       // Check if user has already marked attendance for this session
@@ -336,11 +391,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Allow admins to mark attendance for other users
       const userId = req.body.manual && req.session.role === 'admin' ? req.body.userId : user.id;
       
-      const attendanceData: any = {
-        userId,
-        sessionId,
-        checkInTime: new Date(),
-        status: "present"
+      // Store user details in attendance record
+      const attendanceData = {
+        user_id: userId,
+        session_id: sessionId,
+        check_in_time: new Date().toISOString(),
+        status: "present",
+        user_name: user.name || ""  // Store user name for reference
       };
       
       const attendance = await storage.markAttendance(attendanceData);
@@ -401,7 +458,4 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/export/students", isAdmin, async (req, res) => {
     res.json({ message: "Excel export functionality would be implemented here" });
   });
-
-  const httpServer = createServer(app);
-  return httpServer;
 }

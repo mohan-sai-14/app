@@ -117,7 +117,7 @@ export class SupabaseStorage implements IStorage {
         time: session.time,
         duration: session.duration,
         qr_code: session.qrCode,
-        expires_at: expirationTime,
+        expires_at: expirationTime.toISOString(),
         is_active: true
       })
       .select()
@@ -132,7 +132,20 @@ export class SupabaseStorage implements IStorage {
       .select()
       .eq('id', id)
       .single();
-    return data || undefined;
+    
+    if (!data) return undefined;
+    
+    // Check if session has expired
+    const expiryTime = new Date(data.expires_at).getTime();
+    const currentTime = Date.now();
+    
+    if (currentTime > expiryTime && data.is_active) {
+      // Automatically deactivate expired sessions
+      await this.expireSession(data.id);
+      return { ...data, is_active: false };
+    }
+    
+    return data;
   }
 
   async getActiveSession(): Promise<Session | undefined> {
@@ -141,7 +154,20 @@ export class SupabaseStorage implements IStorage {
       .select()
       .eq('is_active', true)
       .single();
-    return data || undefined;
+
+    if (!data) return undefined;
+    
+    // Check if session has expired
+    const expiryTime = new Date(data.expires_at).getTime();
+    const currentTime = Date.now();
+    
+    if (currentTime > expiryTime) {
+      // Automatically deactivate expired sessions
+      await this.expireSession(data.id);
+      return undefined;
+    }
+    
+    return data;
   }
 
   async getAllSessions(): Promise<Session[]> {
@@ -178,13 +204,32 @@ export class SupabaseStorage implements IStorage {
   }
 
   async markAttendance(attendance: InsertAttendance): Promise<Attendance> {
-    const { data, error } = await supabase
-      .from('attendance')
-      .insert(attendance)
-      .select()
-      .single();
-    if (error) throw error;
-    return data;
+    try {
+      // Ensure proper field naming for Supabase
+      const formattedAttendance = {
+        user_id: attendance.user_id,
+        session_id: attendance.session_id,
+        check_in_time: attendance.check_in_time,
+        status: attendance.status,
+        user_name: attendance.user_name || "",
+      };
+      
+      const { data, error } = await supabase
+        .from('attendance')
+        .insert(formattedAttendance)
+        .select()
+        .single();
+        
+      if (error) {
+        console.error("Error marking attendance:", error);
+        throw error;
+      }
+      
+      return data;
+    } catch (error) {
+      console.error("Error in markAttendance:", error);
+      throw error;
+    }
   }
 
   async getAttendanceBySession(sessionId: number): Promise<Attendance[]> {

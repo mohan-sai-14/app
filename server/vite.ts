@@ -86,3 +86,63 @@ export function serveStatic(app: Express) {
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }
+
+/**
+ * Function to automatically check for expired sessions and mark absent students
+ * This will run periodically to ensure all students are properly marked
+ */
+export async function setupSessionExpirationCheck(storage: any) {
+  const checkExpirations = async () => {
+    try {
+      // Get all sessions that are active
+      const sessions = await storage.getAllSessions();
+      const activeSessions = sessions.filter(session => session.is_active);
+      
+      const currentTime = Date.now();
+      
+      // Check each active session for expiration
+      for (const session of activeSessions) {
+        const expiryTime = new Date(session.expires_at).getTime();
+        
+        // If expired, mark as expired and mark absent students
+        if (currentTime > expiryTime) {
+          console.log(`Session ${session.id} (${session.name}) has expired. Marking absent students...`);
+          
+          // Get all students
+          const students = await storage.getUsersByRole("student");
+          
+          // Get all students who already marked attendance
+          const attendanceRecords = await storage.getAttendanceBySession(session.id);
+          
+          // Find students who did not mark attendance (absent)
+          const presentStudentIds = attendanceRecords.map(record => record.user_id);
+          const absentStudents = students.filter(student => !presentStudentIds.includes(student.id));
+          
+          // Mark absent students
+          for (const student of absentStudents) {
+            await storage.markAttendance({
+              user_id: student.id,
+              session_id: session.id,
+              check_in_time: new Date().toISOString(),
+              status: "absent",
+              user_name: student.name || ""
+            });
+          }
+          
+          // Mark the session as expired
+          await storage.expireSession(session.id);
+          
+          console.log(`Marked ${absentStudents.length} students as absent for session ${session.id}`);
+        }
+      }
+    } catch (error) {
+      console.error("Error checking for expired sessions:", error);
+    }
+  };
+  
+  // Run immediately on startup
+  await checkExpirations();
+  
+  // Then run every minute
+  setInterval(checkExpirations, 60 * 1000);
+}
